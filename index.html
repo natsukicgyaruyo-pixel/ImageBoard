@@ -1,0 +1,864 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Image Placement</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-image: url('./checker_fullhd_16px.png');
+            background-repeat: repeat;
+            background-size: auto;
+            position: relative;
+            user-select: none;
+        }
+
+        #drop-guide {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 123, 255, 0.2);
+            border: 5px dashed #007bff;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: sans-serif;
+            font-size: 28px;
+            font-weight: bold;
+            color: #0056b3;
+            z-index: 9999;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        /* ラッパーコンテナ（回転・サイズ変更・ドラッグ用）[cite: 2] */
+        .image-wrapper {
+            position: absolute;
+            z-index: 1;
+            box-sizing: border-box;
+            --rotate-deg: 0deg;
+            transform: rotate(var(--rotate-deg));
+            transform-origin: center center;
+        }
+
+        /* 元のコードのplaced-imageのトランジションと挙動を完全再現[cite: 2] */
+        .placed-image,
+        .animation-frame {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 4px;
+            cursor: grab;
+            transition: filter 0.2s;
+            filter: drop-shadow(0 4px 15px rgba(0, 0, 0, 0.5));
+            pointer-events: none;
+        }
+
+        .animation-frame {
+            opacity: 0;
+        }
+
+        .animation-frame.active {
+            opacity: 1;
+        }
+
+        .image-wrapper:active .placed-image {
+            cursor: grabbing;
+            filter: drop-shadow(0 8px 25px rgba(0, 0, 0, 0.7));
+            z-index: 10;
+        }
+
+        /* 4つの角のコーナーハンドル（Windowsの古いブルースクリーン風の濃い青・細めのまま大きく変更） */
+        .resize-handle {
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            z-index: 11;
+            pointer-events: auto;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+        }
+
+        .image-wrapper:hover .resize-handle {
+            opacity: 1;
+        }
+
+        .handle-tl { 
+            top: -7px; 
+            left: -7px; 
+            cursor: nwse-resize; 
+            border-top: 1px solid #0000CC; 
+            border-left: 1px solid #0000CC; 
+        }
+        .handle-tr { 
+            top: -7px; 
+            right: -7px; 
+            cursor: nesw-resize; 
+            border-top: 1px solid #0000CC; 
+            border-right: 1px solid #0000CC; 
+        }
+        .handle-bl { 
+            bottom: -7px; 
+            left: -7px; 
+            cursor: nesw-resize; 
+            border-bottom: 1px solid #0000CC; 
+            border-left: 1px solid #0000CC; 
+        }
+        .handle-br { 
+            bottom: -7px; 
+            right: -7px; 
+            cursor: nwse-resize; 
+            border-bottom: 1px solid #0000CC; 
+            border-right: 1px solid #0000CC; 
+        }
+
+        #rotation-popup {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.3);
+            z-index: 20000;
+            text-align: center;
+        }
+        #rotation-popup h3 { 
+            margin: 0 0 10px 0; 
+            font-size: 18px; 
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            font-weight: bold;
+            color: #333;
+        }
+        #rotation-input,
+        #framerate-input {
+            width: 70px;
+            padding: 6px;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        #framerate-setting {
+            display: none;
+            margin-top: 14px;
+            padding-top: 12px;
+            border-top: 1px solid #ddd;
+        }
+
+        #framerate-setting label {
+            display: block;
+            margin-bottom: 6px;
+            font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+            font-size: 9px;
+            font-weight: bold;
+            color: #333;
+        }
+        .popup-btn {
+            margin-top: 12px;
+            padding: 6px 20px;
+            cursor: pointer;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .popup-btn:hover { background: #0069d9; }
+
+        /* レイヤーパネル */
+        #layer-panel{position:fixed;left:0;top:0;width:210px;height:100vh;box-sizing:border-box;background:rgba(248,248,250,.98);border-right:1px solid #ccc;box-shadow:2px 0 10px rgba(0,0,0,.1);z-index:15000;display:flex;flex-direction:column;font-family:Arial,'Hiragino Sans',Meiryo,sans-serif}
+        #layer-panel-header{height:42px;min-height:42px;display:flex;align-items:center;justify-content:space-between;padding:0 7px 0 10px;border-bottom:1px solid #d8d8dc;background:#f2f2f4;box-sizing:border-box}
+        #layer-panel-title{font-size:12px;font-weight:700;color:#333}
+        #history-buttons{display:flex;gap:3px}.history-btn{width:28px;height:26px;border:1px solid #c9c9ce;border-radius:4px;background:#fff;color:#333;font-size:17px;cursor:pointer}.history-btn:disabled{opacity:.35;cursor:default}
+        #layer-list{flex:1;overflow-y:auto;padding:4px}.layer-item{display:flex;align-items:center;gap:4px;min-height:34px;margin-bottom:2px;padding:2px 3px;border:1px solid transparent;border-radius:5px;box-sizing:border-box;cursor:pointer}.layer-item:hover{background:#e9e9ed}.layer-item.selected{background:#dcecff;border-color:#9bc4f7}.layer-item.dragging{opacity:.45}
+        .layer-visibility,.layer-delete{width:24px;height:26px;flex:0 0 24px;border:0;background:transparent;cursor:pointer;border-radius:4px}.layer-visibility{font-size:10px;color:#777;opacity:.65}.layer-visibility:hover{opacity:1;color:#444}.layer-delete{font-size:16px;color:#777}.layer-delete:hover{color:#d33;background:#fff0f0}.layer-thumb{width:28px;height:28px;flex:0 0 28px;object-fit:contain;border:1px solid #d0d0d4;border-radius:3px;background:#eee}.layer-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#333}#layer-empty{padding:16px 8px;text-align:center;color:#888;font-size:11px}
+        #layer-edge-zone{position:fixed;left:202px;top:0;width:28px;height:100vh;z-index:15002}
+        #layer-edge-toggle{position:fixed;left:205px;top:50%;transform:translateY(-50%);width:18px;height:42px;z-index:15003;border:1px solid #c5c5ca;border-left:0;border-radius:0 6px 6px 0;background:#fff;color:#777;opacity:0;pointer-events:none;cursor:pointer;font-size:9px;line-height:1}
+        #layer-edge-zone:hover + #layer-edge-toggle,#layer-edge-toggle:hover{opacity:1;pointer-events:auto}
+        #layer-panel.hidden{transform:translateX(-100%)}#layer-panel.hidden + #layer-edge-zone{left:0}#layer-panel.hidden ~ #layer-edge-toggle{left:0}
+    .layer-insert-zone{height:5px;margin:-2px 3px;border-radius:3px}.layer-insert-zone.drag-over{height:7px;background:#2f80ed;box-shadow:0 0 0 1px rgba(47,128,237,.2)}
+    </style>
+</head>
+<body>
+
+    <input type="file" id="file-input" accept="image/*" multiple style="display:none;">
+    <div id="drop-guide">ここに画像をドロップ！</div>
+    <aside id="layer-panel" aria-label="レイヤーパネル"><div id="layer-panel-header"><div id="layer-panel-title">レイヤー</div><div id="history-buttons"><button class="history-btn" id="undo-btn" title="Undo" disabled>↶</button><button class="history-btn" id="redo-btn" title="Redo" disabled>↷</button></div></div><div id="layer-list"><div id="layer-empty">画像を追加するとレイヤーが表示されます</div></div></aside>
+    <div id="layer-edge-zone"></div><button id="layer-edge-toggle" title="レイヤーパネルを表示/非表示">◀</button>
+
+
+    <div id="rotation-popup">
+        <h3>回転</h3>
+        <input type="number" id="rotation-input" step="1">
+        <div id="framerate-setting">
+            <label for="framerate-input">フレームレート</label>
+            <input type="number" id="framerate-input" min="1" max="240" step="1" value="24">
+            <span> FPS</span>
+        </div>
+        <br>
+        <button class="popup-btn" id="popup-ok">OK</button>
+    </div>
+
+    <script>
+        const dropGuide = document.getElementById('drop-guide');
+        const popup = document.getElementById('rotation-popup');
+        const input = document.getElementById('rotation-input');
+        const okBtn = document.getElementById('popup-ok');
+        let currentTargetImage = null;
+        let currentTargetWrapper = null;
+        const layerPanel=document.getElementById('layer-panel');
+        const layerList=document.getElementById('layer-list');
+        const layerEmpty=document.getElementById('layer-empty');
+        const undoBtn=document.getElementById('undo-btn'), redoBtn=document.getElementById('redo-btn');
+        const layerEdgeToggle=document.getElementById('layer-edge-toggle');
+
+        // レイヤーパネル内の操作をキャンバス側へ伝播させない
+        layerPanel.addEventListener('mousedown', e => e.stopPropagation());
+        layerPanel.addEventListener('click', e => e.stopPropagation());
+        layerPanel.addEventListener('dblclick', e => e.stopPropagation());
+
+        const undoStack=[], redoStack=[];
+        let restoring=false, layerAnchorWrapper=null;
+
+        function wrappers(){return Array.from(document.querySelectorAll('.image-wrapper'));}
+        function selectedLayers(){return wrappers().filter(w=>w.classList.contains('is-selected'));}
+        function actionTargets(w){const a=selectedLayers();return a.length&&a.includes(w)?a:[w];}
+        function snapshot(){return wrappers().map(w=>({
+            id:w.dataset.layerId,name:w.dataset.layerName||'画像',
+            srcs:Array.from(w.querySelectorAll('img')).map(i=>i.src),
+            left:w.style.left,top:w.style.top,width:w.style.width,height:w.style.height,
+            rotate:w.style.getPropertyValue('--rotate-deg')||'0deg',visible:w.dataset.visible!=='false',z:w.style.zIndex||'1',
+            isAnimation:!!animationStates.get(w),fps:animationStates.get(w)?.fps||24,current:animationStates.get(w)?.currentFrame||0
+        }));}
+        function same(a,b){return JSON.stringify(a)===JSON.stringify(b)}
+        function buttons(){undoBtn.disabled=!undoStack.length;redoBtn.disabled=!redoStack.length}
+        function history(before){if(restoring||!before)return;const after=snapshot();if(!same(before,after)){undoStack.push(before);redoStack.length=0;buttons()}}
+        function setVisible(w,v){w.dataset.visible=String(v);w.style.display=v?'':'none'}
+        function selectLayer(w){wrappers().forEach(x=>x.classList.remove('is-selected'));w.classList.add('is-selected');currentTargetWrapper=w;currentTargetImage=w.querySelector('img');layerAnchorWrapper=w;refreshLayers()}
+        function normalizeZ(){wrappers().forEach((w,i)=>w.style.zIndex=String(i+1))}
+        function prepareLayer(w,name){w.dataset.layerId='layer-'+Date.now()+'-'+Math.random().toString(36).slice(2);w.dataset.layerName=name||'画像';w.dataset.visible='true';w.style.zIndex=String(wrappers().length+1)}
+
+        function insertZone(index){
+            const z=document.createElement('div');z.className='layer-insert-zone';z.dataset.index=String(index);
+            z.addEventListener('dragover',e=>{e.preventDefault();z.classList.add('drag-over');e.dataTransfer.dropEffect='move'});
+            z.addEventListener('dragleave',()=>z.classList.remove('drag-over'));
+            z.addEventListener('drop',e=>{
+                e.preventDefault();z.classList.remove('drag-over');
+                const raw=e.dataTransfer.getData('application/x-layer-ids'); if(!raw)return; const ids=raw.split('|').filter(Boolean);
+                const moving=ids.map(id=>wrappers().find(w=>w.dataset.layerId===id)).filter(Boolean); if(!moving.length)return;
+                const before=snapshot(), all=wrappers(), set=new Set(moving), remaining=all.filter(w=>!set.has(w));
+                let idx=Math.max(0,Math.min(parseInt(z.dataset.index,10)||0,remaining.length));
+                remaining.splice(idx,0,...moving); remaining.forEach(w=>document.body.appendChild(w)); normalizeZ(); history(before); refreshLayers();
+            });
+            return z;
+        }
+
+        function refreshLayers(){
+            const list=wrappers().slice().reverse(); layerList.innerHTML='';
+            if(!list.length){layerList.appendChild(layerEmpty);return;}
+            layerList.appendChild(insertZone(999999));
+            list.forEach((w,displayIndex)=>{
+                const row=document.createElement('div'); row.className='layer-item'+(w.classList.contains('is-selected')?' selected':'');row.draggable=true;row.dataset.wrapperId=w.dataset.layerId;
+                row.addEventListener('click',e=>{
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if(e.target.closest('button'))return;
+
+                    if(e.shiftKey && layerAnchorWrapper){
+                        const ai=list.indexOf(layerAnchorWrapper);
+                        const bi=list.indexOf(w);
+
+                        if(ai>=0 && bi>=0){
+                            const lo=Math.min(ai,bi);
+                            const hi=Math.max(ai,bi);
+
+                            wrappers().forEach(x=>x.classList.remove('is-selected'));
+                            for(let i=lo;i<=hi;i++){
+                                list[i].classList.add('is-selected');
+                            }
+                        }else{
+                            w.classList.add('is-selected');
+                        }
+
+                        currentTargetWrapper=w;
+                        currentTargetImage=w.querySelector('img');
+                    }else{
+                        selectLayer(w);
+                    }
+
+                    layerAnchorWrapper=w;
+                    refreshLayers();
+                });
+                const vis=document.createElement('button');vis.className='layer-visibility';vis.textContent=w.dataset.visible==='false'?'○':'●';vis.title=w.dataset.visible==='false'?'表示':'非表示';
+                vis.onclick=e=>{e.stopPropagation();const b=snapshot(),targets=actionTargets(w),v=targets.some(x=>x.dataset.visible==='false');targets.forEach(x=>setVisible(x,v));history(b);refreshLayers()};
+                const th=document.createElement('img');th.className='layer-thumb';th.src=w.querySelector('img')?.src||'';
+                const name=document.createElement('div');name.className='layer-name';name.textContent=w.dataset.layerName||'画像';name.title=name.textContent;
+                const del=document.createElement('button');del.className='layer-delete';del.textContent='×';del.title='削除';
+                del.onclick=e=>{e.stopPropagation();const b=snapshot();actionTargets(w).forEach(x=>{const st=animationStates.get(x);if(st?.rafId)cancelAnimationFrame(st.rafId);x.remove()});currentTargetWrapper=null;currentTargetImage=null;layerAnchorWrapper=null;history(b);refreshLayers()};
+                row.append(vis,th,name,del); layerList.appendChild(row);
+                row.ondragstart=e=>{
+                    e.stopPropagation();
+                    const targets=actionTargets(w);
+                    if(!targets.includes(w)){
+                        wrappers().forEach(x=>x.classList.remove('is-selected'));
+                        w.classList.add('is-selected');
+                    }
+                    const moving=actionTargets(w);
+                    e.dataTransfer.setData('application/x-layer-ids',moving.map(x=>x.dataset.layerId).join('|'));
+                    e.dataTransfer.setData('text/plain','__LAYER_DRAG__');
+                    e.dataTransfer.effectAllowed='move';
+                    row.classList.add('dragging');
+                    document.querySelectorAll('.layer-insert-zone').forEach(z=>z.classList.remove('drag-over'));
+                };
+                row.ondragend=e=>{
+                    e.stopPropagation();
+                    row.classList.remove('dragging');
+                    document.querySelectorAll('.layer-insert-zone').forEach(z=>z.classList.remove('drag-over'));
+                };
+                layerList.appendChild(insertZone(list.length-displayIndex-1));
+            });
+        }
+
+        function deleteSelected(){const targets=selectedLayers();if(!targets.length)return;const b=snapshot();targets.forEach(x=>{const st=animationStates.get(x);if(st?.rafId)cancelAnimationFrame(st.rafId);x.remove()});currentTargetWrapper=null;currentTargetImage=null;layerAnchorWrapper=null;history(b);refreshLayers()}
+        function setSelectedVisibility(v){const targets=selectedLayers();if(!targets.length)return;const b=snapshot();targets.forEach(x=>setVisible(x,v));history(b);refreshLayers()}
+        function restore(snapshotData){
+            restoring=true;
+            wrappers().forEach(w=>{const st=animationStates.get(w);if(st?.rafId)cancelAnimationFrame(st.rafId);w.remove()});
+            snapshotData.forEach(s=>{
+                const w=document.createElement('div');w.className='image-wrapper';w.dataset.layerId=s.id;w.dataset.layerName=s.name;w.dataset.visible=String(s.visible);w.style.left=s.left;w.style.top=s.top;w.style.width=s.width;w.style.height=s.height;w.style.zIndex=s.z;w.style.setProperty('--rotate-deg',s.rotate);w.style.display=s.visible?'':'none';
+                ['tl','tr','bl','br'].forEach(pos=>{const h=document.createElement('div');h.className=`resize-handle handle-${pos}`;h.dataset.handle=pos;w.appendChild(h)});
+                if(s.isAnimation && s.srcs.length>1){
+                    const frames=s.srcs.map((src,i)=>{const img=document.createElement('img');img.className='animation-frame';img.src=src;if(i===Math.min(s.current,s.srcs.length-1))img.classList.add('active');w.appendChild(img);return img});
+                    const st={frames,currentFrame:Math.min(s.current,frames.length-1),fps:s.fps||24,running:true,lastTime:null,accumulator:0,rafId:null,sourceFiles:s.srcs};animationStates.set(w,st);
+                    function animate(t){if(!document.body.contains(w)){st.running=false;return}if(st.lastTime===null)st.lastTime=t;st.accumulator+=Math.min(t-st.lastTime,250);st.lastTime=t;const d=1000/st.fps;while(st.accumulator>=d){st.accumulator-=d;st.frames[st.currentFrame].classList.remove('active');st.currentFrame=(st.currentFrame+1)%st.frames.length;st.frames[st.currentFrame].classList.add('active')}st.rafId=requestAnimationFrame(animate)}st.rafId=requestAnimationFrame(animate);addInteractions(w,frames[0],parseFloat(s.width)/parseFloat(s.height)||1);
+                }else{const img=document.createElement('img');img.className='placed-image';img.src=s.srcs[0]||'';w.appendChild(img);addInteractions(w,img,parseFloat(s.width)/parseFloat(s.height)||1)}
+                document.body.appendChild(w);
+            });
+            normalizeZ();currentTargetWrapper=null;currentTargetImage=null;layerAnchorWrapper=null;refreshLayers();restoring=false;
+        }
+
+        function performUndo(){if(!undoStack.length)return;const cur=snapshot(),prev=undoStack.pop();redoStack.push(cur);restore(prev);buttons()}
+        function performRedo(){if(!redoStack.length)return;const cur=snapshot(),next=redoStack.pop();undoStack.push(cur);restore(next);buttons()}
+        undoBtn.onclick=performUndo;redoBtn.onclick=performRedo;
+        layerEdgeToggle.onclick=()=>{const hidden=layerPanel.classList.toggle('hidden');layerEdgeToggle.textContent=hidden?'›':'‹'};
+
+        // アニメーション画像用の状態
+        const animationStates = new WeakMap();
+        const framerateSetting = document.getElementById('framerate-setting');
+        const framerateInput = document.getElementById('framerate-input');
+
+        // 既存のラッパー要素を網羅して重なり判定を行うためのヘルパー関数
+        function checkOverlap(newX, newY, newW, newH) {
+            const wrappers = document.querySelectorAll('.image-wrapper');
+            for (const wrapper of wrappers) {
+                const rect = wrapper.getBoundingClientRect();
+                const existing = {
+                    left: rect.left,
+                    top: rect.top,
+                    right: rect.right,
+                    bottom: rect.bottom
+                };
+                const candidate = {
+                    left: newX,
+                    top: newY,
+                    right: newX + newW,
+                    bottom: newY + newH
+                };
+
+                if (!(candidate.right < existing.left || 
+                      candidate.left > existing.right || 
+                      candidate.bottom < existing.top || 
+                      candidate.top > existing.bottom)) {
+                    return true; // 重なっている
+                }
+            }
+            return false;
+        }
+
+        /*
+         * 画像の読み込みルール
+         * - 通常の複数選択 / 複数ドロップ：各画像を1枚ずつランダム配置
+         * - ファイル名が連番になっているグループ：1つのアニメーション画像として配置
+         *
+         * 例：
+         *   walk_001.png
+         *   walk_002.png
+         *   walk_003.png
+         * → 1個のアニメーションオブジェクト
+         *
+         *   photo_a.jpg
+         *   photo_b.jpg
+         * → 2個の通常画像
+         */
+
+        const fileInput = document.getElementById('file-input');
+
+        // 画面をクリックして画像を選択できるようにする
+        document.addEventListener('keydown', (e) => {
+            const tag=document.activeElement?.tagName;
+            const editing=tag==='INPUT'||tag==='TEXTAREA'||document.activeElement?.isContentEditable;
+            if(editing)return;
+            if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='o'){e.preventDefault();fileInput.click();return}
+            if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='z'){e.preventDefault();if(e.shiftKey)performRedo();else performUndo();return}
+            if(!selectedLayers().length)return;
+            if(e.key==='Delete'||e.key==='Backspace'){e.preventDefault();deleteSelected();return}
+            if(e.key.toLowerCase()==='h'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();setSelectedVisibility(e.altKey);return}
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+            e.target.value = '';
+        });
+
+        // ファイル名から「連番画像」かどうかを判定する。
+        // 末尾の数字を連番として扱う。
+        function getSequenceInfo(file) {
+            const match = file.name.match(/^(.*?)(\d+)(\.[^.]+)$/i);
+            if (!match) return null;
+
+            return {
+                prefix: match[1],
+                number: parseInt(match[2], 10),
+                digits: match[2].length,
+                extension: match[3].toLowerCase(),
+                key: (match[1] + match[3]).toLowerCase()
+            };
+        }
+
+        function groupFiles(files) {
+            const imageFiles = Array.from(files).filter(file =>
+                file.type && file.type.startsWith('image/')
+            );
+
+            if (imageFiles.length === 0) return [];
+
+            /*
+             * 重要：
+             * 「複数選択した」というだけではアニメーションにしない。
+             *
+             * アニメーションとして扱う条件は、
+             *  1. 2枚以上選択されている
+             *  2. 全ファイルが「同じベース名 + 連番 + 同じ拡張子」
+             *  3. 連番が実際に連続している
+             *
+             * 例：
+             *   walk_001.png
+             *   walk_002.png
+             *   walk_003.png
+             *   → アニメーション
+             *
+             *   cat.png
+             *   car.png
+             *   tree.png
+             *   → 普通の画像3枚
+             *
+             *   photo_001.png
+             *   photo_003.png
+             *   → 普通の画像2枚（連番が途切れているため）
+             */
+
+            if (imageFiles.length >= 2) {
+                const infos = imageFiles.map(file => {
+                    const match = file.name.match(/^(.*?)(\d+)(\.[^.]+)$/i);
+                    if (!match) return null;
+
+                    return {
+                        file,
+                        prefix: match[1],
+                        number: parseInt(match[2], 10),
+                        digits: match[2].length,
+                        extension: match[3].toLowerCase()
+                    };
+                });
+
+                const canBeSequence = infos.every(info => info !== null);
+
+                if (canBeSequence) {
+                    const first = infos[0];
+
+                    // 全ファイルが同じ「連番シリーズ」か確認
+                    const sameSeries = infos.every(info =>
+                        info.prefix === first.prefix &&
+                        info.extension === first.extension
+                    );
+
+                    if (sameSeries) {
+                        infos.sort((a, b) => a.number - b.number);
+
+                        // 重複番号がないこと + 番号が1ずつ連続していること
+                        let consecutive = true;
+
+                        for (let i = 1; i < infos.length; i++) {
+                            if (infos[i].number !== infos[i - 1].number + 1) {
+                                consecutive = false;
+                                break;
+                            }
+                        }
+
+                        if (consecutive) {
+                            return [{
+                                type: 'animation',
+                                files: infos.map(info => info.file),
+                                firstNumber: infos[0].number,
+                                lastNumber: infos[infos.length - 1].number
+                            }];
+                        }
+                    }
+                }
+            }
+
+            // ここが重要。
+            // 連番アニメーションではない複数画像は、
+            // すべて「普通の画像」として1枚ずつ配置する。
+            return imageFiles.map(file => ({
+                type: 'image',
+                files: [file]
+            }));
+        }
+
+        function getRandomPosition(imgWidth, imgHeight) {
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+
+            let bestX = 10;
+            let bestY = 10;
+            let foundPosition = false;
+
+            const maxX = Math.max(10, screenWidth - imgWidth - 20);
+            const maxY = Math.max(10, screenHeight - imgHeight - 20);
+
+            for (let i = 0; i < 500; i++) {
+                const randomX = Math.random() * maxX;
+                const randomY = Math.random() * maxY;
+
+                if (!checkOverlap(randomX, randomY, imgWidth, imgHeight)) {
+                    bestX = randomX;
+                    bestY = randomY;
+                    foundPosition = true;
+                    break;
+                }
+            }
+
+            if (!foundPosition) {
+                bestX = Math.random() * maxX;
+                bestY = Math.random() * maxY;
+            }
+
+            return {
+                x: Math.max(10, bestX),
+                y: Math.max(10, bestY)
+            };
+        }
+
+        function createWrapper(imgWidth, imgHeight, aspectRatio, layerName) {
+            const before = snapshot();
+            const position = getRandomPosition(imgWidth, imgHeight);
+            const randomRotate = (Math.random() - 0.5) * 30;
+
+            const wrapper = document.createElement('div');
+            wrapper.className = 'image-wrapper';
+            wrapper.style.left = `${position.x}px`;
+            wrapper.style.top = `${position.y}px`;
+            wrapper.style.width = `${imgWidth}px`;
+            wrapper.style.height = `${imgHeight}px`;
+            wrapper.style.transition = 'transform 0.1s';
+
+            ['tl', 'tr', 'bl', 'br'].forEach(pos => {
+                const handle = document.createElement('div');
+                handle.className = `resize-handle handle-${pos}`;
+                handle.dataset.handle = pos;
+                wrapper.appendChild(handle);
+            });
+
+            prepareLayer(wrapper, layerName);
+            document.body.appendChild(wrapper);
+            requestAnimationFrame(() => {
+                wrapper.style.setProperty('--rotate-deg', `${randomRotate}deg`);
+            });
+
+            return wrapper;
+        }
+
+        function loadImageFile(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+
+                reader.onload = e => {
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.onload = () => resolve({
+                        img,
+                        src: e.target.result,
+                        width: img.naturalWidth,
+                        height: img.naturalHeight
+                    });
+                    img.onerror = reject;
+                };
+
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        async function placeNormalImage(file) {
+            const before=snapshot();
+            try {
+                const data = await loadImageFile(file);
+                const naturalW = data.width;
+                const naturalH = data.height;
+                const aspectRatio = naturalW / naturalH || 1;
+
+                const imgWidth = naturalW ? Math.min(naturalW, 200) : 150;
+                const imgHeight = imgWidth / aspectRatio;
+
+                const wrapper = createWrapper(imgWidth, imgHeight, aspectRatio, file.name);
+
+                const img = data.img;
+                img.className = 'placed-image';
+                wrapper.appendChild(img);
+
+                addInteractions(wrapper, img, aspectRatio);
+                history(before); refreshLayers();
+            } catch (error) {
+                console.error('画像の読み込みに失敗しました:', file.name, error);
+            }
+        }
+
+        async function placeAnimation(files) {
+            const before=snapshot();
+            try {
+                const frames = await Promise.all(files.map(loadImageFile));
+
+                if (!frames.length) return;
+
+                const first = frames[0];
+                const aspectRatio = first.width / first.height || 1;
+
+                // 1つのオブジェクトとして配置するので、
+                // ドラッグ・リサイズ・回転は通常画像と完全に同じ。
+                const imgWidth = first.width ? Math.min(first.width, 200) : 150;
+                const imgHeight = imgWidth / aspectRatio;
+
+                const wrapper = createWrapper(imgWidth, imgHeight, aspectRatio, files.map(f => f.name).join(', '));
+
+                const frameElements = [];
+
+                frames.forEach((frame, index) => {
+                    const img = frame.img;
+                    img.className = 'animation-frame';
+                    if (index === 0) img.classList.add('active');
+                    wrapper.appendChild(img);
+                    frameElements.push(img);
+                });
+
+                // 1枚の「アニメーション画像」として扱う。
+                // デフォルトは24 FPS。setIntervalではなく
+                // requestAnimationFrameで実時間を見て切り替える。
+                // これによりブラウザ側のタイマー遅延の影響を受けにくくする。
+                const state = {
+                    frames: frameElements,
+                    currentFrame: 0,
+                    fps: 24,
+                    running: true,
+                    lastTime: null,
+                    accumulator: 0,
+                    rafId: null,
+                    sourceFiles: frameElements.map(frame => frame.src)
+                };
+
+                animationStates.set(wrapper, state);
+
+                function animate(timestamp) {
+                    if (!document.body.contains(wrapper)) {
+                        state.running = false;
+                        return;
+                    }
+
+                    if (state.lastTime === null) {
+                        state.lastTime = timestamp;
+                    }
+
+                    const delta = Math.min(timestamp - state.lastTime, 250);
+                    state.lastTime = timestamp;
+
+                    state.accumulator += delta;
+
+                    const frameDuration = 1000 / state.fps;
+
+                    while (state.accumulator >= frameDuration) {
+                        state.accumulator -= frameDuration;
+
+                        state.frames[state.currentFrame].classList.remove('active');
+                        state.currentFrame =
+                            (state.currentFrame + 1) % state.frames.length;
+                        state.frames[state.currentFrame].classList.add('active');
+                    }
+
+                    state.rafId = requestAnimationFrame(animate);
+                }
+
+                state.rafId = requestAnimationFrame(animate);
+
+                // 通常画像と同じ操作系を使う。
+                // アニメーション用のFPS設定はwrapper側に紐付ける。
+                addInteractions(wrapper, frameElements[0], aspectRatio);
+                history(before); refreshLayers();
+            } catch (error) {
+                console.error('連番画像の読み込みに失敗しました:', error);
+            }
+        }
+
+        async function handleFiles(files) {
+            if (!files || files.length === 0) return;
+
+            const groups = groupFiles(files);
+
+            for (const group of groups) {
+                if (group.type === 'animation') {
+                    await placeAnimation(group.files);
+                } else {
+                    await placeNormalImage(group.files[0]);
+                }
+            }
+        }
+
+        function addInteractions(wrapper,img,aspectRatio){
+            let dragging=false,resizing=false,handle=null,startX,startY,startW,startH,startL,startT,before=null,moved=false,groupStart=[];
+            wrapper.addEventListener('mousedown',e=>{
+                if(e.button!==0)return;
+                if(e.shiftKey&&!e.target.classList.contains('resize-handle')){
+                    wrapper.classList.toggle('is-selected');currentTargetWrapper=wrapper;currentTargetImage=img;layerAnchorWrapper=wrapper;refreshLayers();
+                }else if(!wrapper.classList.contains('is-selected'))selectLayer(wrapper);
+                else{currentTargetWrapper=wrapper;currentTargetImage=img}
+                resizing=e.target.classList.contains('resize-handle');dragging=!resizing;if(resizing){handle=e.target.dataset.handle;e.stopPropagation()}
+                before=snapshot();moved=false;startX=e.clientX;startY=e.clientY;startW=wrapper.offsetWidth;startH=wrapper.offsetHeight;startL=wrapper.offsetLeft;startT=wrapper.offsetTop;
+                groupStart=actionTargets(wrapper).map(w=>({w,x:parseFloat(w.style.left)||w.offsetLeft,y:parseFloat(w.style.top)||w.offsetTop}));wrapper.style.transition='none';e.preventDefault();
+            });
+            window.addEventListener('mousemove',e=>{
+                if(!dragging&&!resizing)return;const dx=e.clientX-startX,dy=e.clientY-startY;if(Math.abs(dx)>3||Math.abs(dy)>3)moved=true;
+                if(dragging)groupStart.forEach(o=>{o.w.style.left=`${o.x+dx}px`;o.w.style.top=`${o.y+dy}px`});
+                else{let nw=startW,nh=startH,nx=startL,ny=startT;switch(handle){case'tl':nw=startW-dx;nh=nw/aspectRatio;nx=startL+dx;ny=startT+(startH-nh);break;case'tr':nw=startW+dx;nh=nw/aspectRatio;ny=startT+(startH-nh);break;case'bl':nw=startW-dx;nh=nw/aspectRatio;nx=startL+dx;break;case'br':nw=startW+dx;nh=nw/aspectRatio;break}if(nw>30&&nh>30){wrapper.style.width=`${nw}px`;wrapper.style.height=`${nh}px`;wrapper.style.left=`${nx}px`;wrapper.style.top=`${ny}px`}}
+            });
+            window.addEventListener('mouseup',()=>{if(!dragging&&!resizing)return;wrapper.style.transition='transform .1s';if(moved)history(before);dragging=false;resizing=false;handle=null;before=null;refreshLayers()});
+            wrapper.addEventListener('dblclick',e=>{e.stopPropagation();selectLayer(wrapper);const r=getComputedStyle(wrapper).getPropertyValue('--rotate-deg').replace('deg','');input.value=Math.round(r);const st=animationStates.get(wrapper);framerateSetting.style.display=st?'block':'none';if(st)framerateInput.value=st.fps;popup.style.display='block';input.focus();input.select()});
+        }
+
+        okBtn.addEventListener('click', e => {
+            e.preventDefault();
+            applyRotation();
+        });
+        function applyRotation() {
+            if (!currentTargetWrapper) {
+                closePopup();
+                return;
+            }
+
+            const targetWrapper = currentTargetWrapper;
+            const before = snapshot();
+            const angle = input.value;
+            const animationState = animationStates.get(targetWrapper);
+
+            // OKを押した瞬間にウィンドウを閉じる
+            closePopup();
+
+            // 閉じる処理で currentTargetWrapper が変わっても、
+            // 確定対象を保持しているので回転/FPSを正しく適用する。
+            targetWrapper.style.setProperty('--rotate-deg', `${angle}deg`);
+
+            if (animationState) {
+                let fps = parseInt(framerateInput.value, 10);
+                if (!Number.isFinite(fps)) fps = 24;
+                fps = Math.max(1, Math.min(240, fps));
+                animationState.fps = fps;
+                framerateInput.value = fps;
+            }
+
+            history(before);
+            refreshLayers();
+        }
+
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyRotation();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closePopup();
+            }
+        });
+
+        framerateInput.addEventListener('keydown', e => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                applyRotation();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                closePopup();
+            }
+        });
+
+        function closePopup() {
+            popup.style.display = 'none';
+            framerateSetting.style.display = 'none';
+            currentTargetImage = null;
+            currentTargetWrapper = null;
+        }
+
+        window.addEventListener('click', (e) => {
+            if (e.target !== popup && !popup.contains(e.target) && !e.target.closest('.image-wrapper')) {
+                document.querySelectorAll('.image-wrapper').forEach(w => w.classList.remove('is-selected'));
+                currentTargetWrapper=null; currentTargetImage=null; refreshLayers();
+                closePopup();
+            }
+        });
+
+        window.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            if(e.dataTransfer.types.includes('application/x-layer-ids')) {
+                dropGuide.style.opacity = '0';
+                return;
+            }
+            dropGuide.style.opacity = '1';
+        });
+
+        window.addEventListener('dragleave', (e) => {
+            if (e.clientX === 0 && e.clientY === 0) {
+                dropGuide.style.opacity = '0';
+            }
+        });
+
+        window.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropGuide.style.opacity = '0';
+
+            // レイヤー構造のドラッグはパネル内の挿入位置でのみ処理する。
+            if(e.dataTransfer.types.includes('application/x-layer-ids')) return;
+
+            handleFiles(e.dataTransfer.files);
+        });
+
+        buttons();
+        refreshLayers();
+
+        // クリックでファイル選択
+        window.addEventListener('dblclick', (e) => {
+            if (e.target === document.body || e.target === dropGuide) {
+                fileInput.click();
+            }
+        });
+    </script>
+</body>
+</html>
